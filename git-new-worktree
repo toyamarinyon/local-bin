@@ -1,0 +1,116 @@
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKTREES_DIR="worktrees"
+EDITOR_CMD="${EDITOR_CMD:-zed}"
+
+die() { echo "❌ $*" >&2; exit 1; }
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  git new-worktree [prefix] [--base <ref>] [--dry-run|-n] [--no-open]
+USAGE
+}
+
+PREFIX="stsh"
+DRY_RUN=0
+NO_OPEN=0
+BASE_OVERRIDE=""
+
+if [[ "${1:-}" != "" && "${1:-}" != -* ]]; then
+  PREFIX="$1"
+  shift
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run|-n) DRY_RUN=1; shift ;;
+    --no-open) NO_OPEN=1; shift ;;
+    --base)
+      shift
+      [[ $# -gt 0 ]] || die "--base requires a value"
+      BASE_OVERRIDE="$1"
+      shift
+      ;;
+    --help|-h) usage; exit 0 ;;
+    *) die "Unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+# ---- compute REAL repo root (works from any worktree) ----
+COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  || die "Not a git repository."
+
+# FIX: repo root is the parent of .git (not one level above that)
+REPO_ROOT="$(cd "$(dirname "$COMMON_GIT_DIR")" && pwd -P)"
+
+# ---- determine base ref ----
+# IMPORTANT: detect base from the CURRENT worktree (not from REPO_ROOT).
+CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+if [[ -n "${BASE_OVERRIDE}" ]]; then
+  BASE_REF="${BASE_OVERRIDE}"
+elif [[ -n "${CURRENT_BRANCH}" ]]; then
+  BASE_REF="${CURRENT_BRANCH}"
+else
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    BASE_REF="HEAD"
+    echo "⚠️  Detached HEAD detected (dry-run only). Using HEAD as base."
+  else
+    die "Detached HEAD: pass --base <branch|commit> (or use --dry-run to preview)."
+  fi
+fi
+
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  git -C "$REPO_ROOT" rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null \
+    || die "Invalid base ref: ${BASE_REF}"
+fi
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+NEW_BRANCH="${PREFIX}/${TIMESTAMP}"
+NEW_WORKTREE_PATH="${REPO_ROOT}/${WORKTREES_DIR}/${PREFIX}/${TIMESTAMP}"
+PARENT_DIR="${REPO_ROOT}/${WORKTREES_DIR}/${PREFIX}"
+
+echo "📌 Repo:        ${REPO_ROOT}"
+echo "📌 Base ref:    ${BASE_REF}"
+echo "🌱 New branch:  ${NEW_BRANCH}"
+echo "📂 Worktree:    ${NEW_WORKTREE_PATH}"
+[[ "$DRY_RUN" -eq 1 ]] && echo "🧪 Mode:        dry-run"
+[[ "$NO_OPEN" -eq 1 ]] && echo "🚫 Open:        disabled"
+
+if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/${NEW_BRANCH}"; then
+  die "Branch already exists: ${NEW_BRANCH}"
+fi
+if [[ -e "${NEW_WORKTREE_PATH}" ]]; then
+  die "Path already exists: ${NEW_WORKTREE_PATH}"
+fi
+
+MKDIR_CMD=(mkdir -p "$PARENT_DIR")
+WORKTREE_CMD=(git -C "$REPO_ROOT" worktree add -b "$NEW_BRANCH" "$NEW_WORKTREE_PATH" "$BASE_REF")
+OPEN_CMD=("$EDITOR_CMD" "$NEW_WORKTREE_PATH")
+
+echo
+echo "▶ Planned commands:"
+printf '  %q ' "${MKDIR_CMD[@]}"; echo
+printf '  %q ' "${WORKTREE_CMD[@]}"; echo
+if [[ "$NO_OPEN" -eq 0 ]]; then
+  printf '  %q ' "${OPEN_CMD[@]}"; echo
+fi
+echo
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "✅ Dry-run complete"
+  exit 0
+fi
+
+"${MKDIR_CMD[@]}"
+"${WORKTREE_CMD[@]}"
+
+if [[ "$NO_OPEN" -eq 0 ]]; then
+  echo "🚀 Opening worktree in editor..."
+  "${OPEN_CMD[@]}"
+fi
+
+echo "✅ Done"

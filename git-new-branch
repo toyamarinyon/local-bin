@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+prefix="${1:-stsh}"
+
+timestamp="$(date +%Y%m%d-%H%M%S)"
+branch="${prefix}/${timestamp}"
+
+echo "🔧 Creating and switching to branch: ${branch}"
+git switch -c "${branch}"

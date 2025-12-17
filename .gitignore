@@ -1,0 +1,9 @@
+# local binaries installed by tools (likely platform-specific)
+uv
+uvx
+env
+env.fish
+.trash
+
+# macOS
+.DS_Store
