@@ -15,38 +15,38 @@ git fetch --prune origin
 
 echo "🔍 Scanning worktrees under: ${REPO_ROOT}/worktrees/${PREFIX}"
 
-# `git worktree list --porcelain` を 1 行ずつ処理（mapfile不要）
+# Process `git worktree list --porcelain` line by line (no mapfile needed)
 git worktree list --porcelain | while IFS= read -r line; do
   case "$line" in
     worktree\ *)
       WT_PATH="${line#worktree }"
 
-      # main working tree（repo root）は skip
+      # Skip the main working tree (repo root)
       if [[ "$WT_PATH" == "$REPO_ROOT" ]]; then
         continue
       fi
 
-      # prefix 配下だけ対象
+      # Only target worktrees under the prefix directory
       case "$WT_PATH" in
         *"/worktrees/${PREFIX}/"*) ;;
         *) continue ;;
       esac
 
-      # worktree側のブランチ名取得（detached は空）
+      # Get the worktree's branch name (empty when detached)
       BRANCH="$(git -C "$WT_PATH" symbolic-ref --short HEAD 2>/dev/null || true)"
       [[ -n "$BRANCH" ]] || continue
 
-      # prefix ブランチだけ対象
+      # Only target prefix branches
       case "$BRANCH" in
         "${PREFIX}/"*) ;;
         *) continue ;;
       esac
 
-      # origin/<default> にマージ済みなら削除
+      # Remove if already merged into origin/<default>
       if git merge-base --is-ancestor "$BRANCH" "origin/${DEFAULT_BRANCH}"; then
         echo "🧹 Removing merged worktree: $WT_PATH  (branch: $BRANCH)"
         git worktree remove --force "$WT_PATH"
-        # ブランチも消す（残したいなら次行をコメントアウト）
+        # Also delete the branch (comment out the next line to keep it)
         git branch -D "$BRANCH" >/dev/null 2>&1 || true
       fi
       ;;

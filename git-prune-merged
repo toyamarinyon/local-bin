@@ -3,30 +3,30 @@ set -euo pipefail
 
 base="${1:-main}"
 
-# 空でもOKなように、変数は必ず初期化
+# Always initialize variables so empty values are OK
 merged_branches=""
 orphaned_branches=""
 
-# マージ済みブランチを取得
+# Get merged branches
 merged_branches="$(
   git branch --merged "$base" --format='%(refname:short)' \
     | grep -vE "^(${base}|master)$" || true
 )"
 
-# 現在のworktreeで使用中のブランチを取得
+# Get branches currently used by worktrees
 worktree_branches="$(
   git worktree list --porcelain | grep '^branch ' | sed 's/^branch refs\/heads\///' || true
 )"
 
-# 削除済みworktreeのブランチ（全ブランチから現在使用中を除外）
+# Branches from removed worktrees (all branches minus currently used ones)
 orphaned_branches="$(
   git branch --format='%(refname:short)' \
     | grep -vE "^(${base}|master)$" \
     | while read -r branch; do
-        # worktreeで使用中でない、かつマージ済みでないブランチ
+        # Branch not used by any worktree and not merged
         if ! echo "$worktree_branches" | grep -qx "$branch" 2>/dev/null; then
           if ! echo "$merged_branches" | grep -qx "$branch" 2>/dev/null; then
-            # worktreeの履歴があるか確認（オプション）
+            # Optional: check whether worktree metadata exists
             if git config --get-regexp "^branch\.$branch\.worktree" >/dev/null 2>&1; then
               echo "$branch"
             fi
@@ -35,12 +35,12 @@ orphaned_branches="$(
       done || true
 )"
 
-# 重複を除いて結合
+# Merge and dedupe
 all_branches="$(
   { echo "$merged_branches"; echo "$orphaned_branches"; } | sort -u | grep -v '^$' || true
 )"
 
-# branches が空かどうかのチェック
+# Check whether the branch list is empty
 if [ -z "${all_branches}" ]; then
   echo "✨ 削除候補のブランチはありません。"
   exit 0
@@ -49,14 +49,14 @@ fi
 echo "📝 削除対象のブランチ:"
 echo
 
-# マージ済みブランチの表示
+# Show merged branches
 if [ -n "$merged_branches" ]; then
   echo "🔀 マージ済み (基準: ${base}):"
   echo "$merged_branches" | sed 's/^/   /'
   echo
 fi
 
-# 削除済みworktreeのブランチの表示
+# Show branches from removed worktrees
 if [ -n "$orphaned_branches" ]; then
   echo "🗑️  削除済みworktreeのブランチ:"
   echo "$orphaned_branches" | sed 's/^/   /'
@@ -66,7 +66,7 @@ fi
 read -r -p "本当に削除しますか？ [y/N]: " ans
 case "${ans}" in
   [Yy]*)
-    # マージ済みは -d で、削除済みworktreeは -D で削除
+    # Delete merged branches with -d; removed-worktree branches with -D
     if [ -n "$merged_branches" ]; then
       echo "$merged_branches" | xargs -r git branch -d
     fi
