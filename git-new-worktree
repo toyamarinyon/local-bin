@@ -4,13 +4,27 @@ set -euo pipefail
 
 WORKTREES_DIR="worktrees"
 EDITOR_CMD="${EDITOR_CMD:-zed}"
+REVIEW_PREFIX="${REVIEW_PREFIX:-review}"
 
 die() { echo "❌ $*" >&2; exit 1; }
 
 usage() {
   cat <<'USAGE'
 Usage:
+  # Create a new timestamped branch + worktree (existing behavior)
   git new-worktree [prefix] [--base <ref>] [--dry-run|-n] [--no-open]
+
+  # Create a worktree for a remote branch (handy for PR review)
+  git new-worktree <remote-branch> [--remote] [--dry-run|-n] [--no-open]
+
+Remote branch formats:
+  feat/my-branch            (assumes origin/feat/my-branch)
+  origin/feat/my-branch     (explicit remote)
+  someRemote:feat/my-branch (GitHub header style; requires a git remote named "someRemote")
+
+Remote mode creates:
+  - worktree: worktrees/review/<branch>
+  - local branch: <branch> (tracks the remote branch)
 USAGE
 }
 
@@ -18,16 +32,14 @@ PREFIX="stsh"
 DRY_RUN=0
 NO_OPEN=0
 BASE_OVERRIDE=""
-
-if [[ "${1:-}" != "" && "${1:-}" != -* ]]; then
-  PREFIX="$1"
-  shift
-fi
+FORCE_REMOTE=0
+POSITIONAL=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run|-n) DRY_RUN=1; shift ;;
     --no-open) NO_OPEN=1; shift ;;
+    --remote) FORCE_REMOTE=1; shift ;;
     --base)
       shift
       [[ $# -gt 0 ]] || die "--base requires a value"
@@ -35,7 +47,17 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h) usage; exit 0 ;;
-    *) die "Unknown argument: $1 (try --help)" ;;
+    --) shift; break ;;
+    -*)
+      die "Unknown argument: $1 (try --help)"
+      ;;
+    *)
+      if [[ -n "$POSITIONAL" ]]; then
+        die "Too many positional arguments (try --help)"
+      fi
+      POSITIONAL="$1"
+      shift
+      ;;
   esac
 done
 
@@ -46,7 +68,119 @@ COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/n
 # FIX: repo root is the parent of .git (not one level above that)
 REPO_ROOT="$(cd "$(dirname "$COMMON_GIT_DIR")" && pwd -P)"
 
-# ---- determine base ref ----
+remote_exists() {
+  git -C "$REPO_ROOT" remote get-url "$1" >/dev/null 2>&1
+}
+
+parse_remote_branch() {
+  local input="$1"
+  REMOTE_NAME="origin"
+  BRANCH_NAME="$input"
+
+  if [[ "$input" == *:* ]]; then
+    REMOTE_NAME="${input%%:*}"
+    BRANCH_NAME="${input#*:}"
+    return 0
+  fi
+
+  if [[ "$input" == */* ]]; then
+    local cand_remote="${input%%/*}"
+    if remote_exists "$cand_remote"; then
+      REMOTE_NAME="$cand_remote"
+      BRANCH_NAME="${input#*/}"
+    fi
+  fi
+}
+
+MODE="new"
+if [[ -n "$POSITIONAL" ]]; then
+  if [[ "$FORCE_REMOTE" -eq 1 ]]; then
+    MODE="remote"
+  elif [[ -n "$BASE_OVERRIDE" ]]; then
+    MODE="new"
+    PREFIX="$POSITIONAL"
+  elif [[ "$POSITIONAL" == *:* ]]; then
+    MODE="remote"
+  elif [[ "$POSITIONAL" == */* ]]; then
+    # Most review targets are "feature/foo" style. We'll validate by fetching below.
+    MODE="remote"
+  else
+    if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/remotes/origin/$POSITIONAL"; then
+      MODE="remote"
+    else
+      MODE="new"
+      PREFIX="$POSITIONAL"
+    fi
+  fi
+fi
+
+if [[ "$MODE" == "remote" ]]; then
+  [[ -n "$POSITIONAL" ]] || die "Remote branch is required (try --help)"
+
+  parse_remote_branch "$POSITIONAL"
+
+  [[ -n "$REMOTE_NAME" ]] || die "Invalid remote spec: $POSITIONAL"
+  [[ -n "$BRANCH_NAME" ]] || die "Invalid branch name: $POSITIONAL"
+  remote_exists "$REMOTE_NAME" || die "Remote '${REMOTE_NAME}' not found."
+
+  NEW_BRANCH="${BRANCH_NAME}"
+  NEW_WORKTREE_PATH="${REPO_ROOT}/${WORKTREES_DIR}/${REVIEW_PREFIX}/${BRANCH_NAME}"
+  PARENT_DIR="$(dirname "$NEW_WORKTREE_PATH")"
+
+  REMOTE_REF="${REMOTE_NAME}/${BRANCH_NAME}"
+  FETCH_CMD=(git -C "$REPO_ROOT" fetch --prune "$REMOTE_NAME" "+refs/heads/${BRANCH_NAME}:refs/remotes/${REMOTE_NAME}/${BRANCH_NAME}")
+  MKDIR_CMD=(mkdir -p "$PARENT_DIR")
+  if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/${NEW_BRANCH}"; then
+    WORKTREE_CMD=(git -C "$REPO_ROOT" worktree add "$NEW_WORKTREE_PATH" "$NEW_BRANCH")
+  else
+    WORKTREE_CMD=(git -C "$REPO_ROOT" worktree add -b "$NEW_BRANCH" "$NEW_WORKTREE_PATH" "$REMOTE_REF")
+  fi
+  UPSTREAM_CMD=(git -C "$REPO_ROOT" branch --set-upstream-to "$REMOTE_REF" "$NEW_BRANCH")
+  OPEN_CMD=("$EDITOR_CMD" "$NEW_WORKTREE_PATH")
+
+  echo "📌 Repo:        ${REPO_ROOT}"
+  echo "🌐 Remote ref:  ${REMOTE_REF}"
+  echo "🌱 New branch:  ${NEW_BRANCH}"
+  echo "📂 Worktree:    ${NEW_WORKTREE_PATH}"
+  [[ "$DRY_RUN" -eq 1 ]] && echo "🧪 Mode:        dry-run"
+  [[ "$NO_OPEN" -eq 1 ]] && echo "🚫 Open:        disabled"
+
+  if [[ -e "${NEW_WORKTREE_PATH}" ]]; then
+    die "Path already exists: ${NEW_WORKTREE_PATH}"
+  fi
+
+  echo
+  echo "▶ Planned commands:"
+  printf '  %q ' "${FETCH_CMD[@]}"; echo
+  printf '  %q ' "${MKDIR_CMD[@]}"; echo
+  printf '  %q ' "${WORKTREE_CMD[@]}"; echo
+  printf '  %q ' "${UPSTREAM_CMD[@]}"; echo
+  if [[ "$NO_OPEN" -eq 0 ]]; then
+    printf '  %q ' "${OPEN_CMD[@]}"; echo
+  fi
+  echo
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "✅ Dry-run complete"
+    exit 0
+  fi
+
+  "${FETCH_CMD[@]}" || die "Fetch failed: remote branch not found? (${REMOTE_REF})"
+  "${MKDIR_CMD[@]}"
+  "${WORKTREE_CMD[@]}"
+  "${UPSTREAM_CMD[@]}" >/dev/null 2>&1 || true
+
+  if [[ "$NO_OPEN" -eq 0 ]]; then
+    echo "🚀 Opening worktree in editor..."
+    "${OPEN_CMD[@]}"
+  fi
+
+  echo "✅ Done"
+  exit 0
+fi
+
+# ---- timestamped branch + worktree mode (existing behavior) ----
+
 # IMPORTANT: detect base from the CURRENT worktree (not from REPO_ROOT).
 CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 
