@@ -303,7 +303,7 @@ start_spinner() {
 
     (
         while true; do
-            printf '\r%s%s' "${frames[$i]}" "$message"
+            printf '\r%s%s' "${frames[$i]}" "$message" >&2
             i=$(( (i + 1) % 4 ))
             sleep 0.1
         done
@@ -315,7 +315,7 @@ stop_spinner() {
     if [[ -n "$spinner_pid" ]] && kill -0 "$spinner_pid" 2>/dev/null; then
         kill "$spinner_pid" 2>/dev/null || true
         wait "$spinner_pid" 2>/dev/null || true
-        printf '\r%40s\r' ' '
+        printf '\r%40s\r' ' ' >&2
     fi
 }
 
