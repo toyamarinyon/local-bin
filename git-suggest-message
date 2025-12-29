@@ -490,7 +490,7 @@ main() {
     suggested=$(call_minimax "$prompt")
 
     # Print suggestion
-    echo -n "$suggested"
+    echo "$suggested"
 
     # 4) Optionally commit
     if ! $COMMIT; then
