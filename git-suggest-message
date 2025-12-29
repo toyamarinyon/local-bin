@@ -386,6 +386,7 @@ call_minimax() {
 confirm() {
     local prompt="$1"
     local response
+    echo >&2
     echo -n "$prompt" >&2
     read -r response < /dev/tty 2>/dev/null || true
     response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
