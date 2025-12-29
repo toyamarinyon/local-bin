@@ -154,10 +154,10 @@ pick_continuity_key() {
 
 # Extract added Done bullets from CONTINUITY.md diff
 extract_added_done_bullets() {
-    local continuity_diff="$1"
+    local continuityDiff="$1"
     local in_done=false
     local result=()
-    local -A seen
+    local seen=""
 
     while IFS= read -r rawLine; do
         # Skip diff metadata lines
@@ -191,18 +191,19 @@ extract_added_done_bullets() {
                     local bullet="${rawLine#+  - }"
                     bullet=$(echo "$bullet" | xargs)
 
-                    # Deduplicate
-                    if [[ -z "${seen[$bullet]:-}" ]]; then
-                        seen[$bullet]=1
+                    # Deduplicate using string matching
+                    if [[ ":$seen:" != *":$bullet:"* ]]; then
+                        seen="${seen}:${bullet}"
                         result+=("$bullet")
                     fi
                     ;;
             esac
         fi
-    done <<< "$continuity_diff"
+    done <<< "$continuityDiff"
 
-    printf '%s\n' "${result[@]}"
+    (IFS=$'\n'; echo "${result[*]:-}")
 }
+
 
 # Build prompt for LLM
 build_prompt() {
