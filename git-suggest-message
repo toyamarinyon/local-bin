@@ -298,7 +298,7 @@ PROMPT
 spinner_pid=""
 start_spinner() {
     local message="$1"
-    local frames=('-' '\\' '|' '/')
+    local frames=('-' '\' '|' '/')
     local i=0
 
     (
@@ -337,7 +337,7 @@ call_minimax() {
     fi
 
     # Start spinner
-    start_spinner "Calling API..."
+    start_spinner " Calling API..."
 
     # Build JSON payload
     local payload
