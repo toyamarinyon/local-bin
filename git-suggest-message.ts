@@ -413,8 +413,16 @@ async function main(): Promise<void> {
   if (!rawDiff) {
     const nameOnly = await runGit("diff", "--cached", "--name-only");
     if (!nameOnly.trim()) {
-      console.error("Nothing staged. Stage changes first (git add ...).");
-      Deno.exit(1);
+      const buf = new TextEncoder().encode("\nNothing staged. Stage all and proceed? [y/N] ");
+      await Deno.stderr.write(buf);
+
+      const input = new Uint8Array(1024);
+      const n = await Deno.stdin.read(input);
+      if (n === null || !new TextDecoder().decode(input.subarray(0, n)).trim().toLowerCase().startsWith("y")) {
+        Deno.exit(1);
+      }
+
+      await runGit("add", ".");
     }
     rawDiff = await runGit("diff", "--cached");
   }
